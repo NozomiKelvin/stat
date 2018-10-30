@@ -1,17 +1,31 @@
 /target/
+*/target/
 !.mvn/wrapper/maven-wrapper.jar
 
-### STS ###
+# gradle wrapper
+gradle/
+
+# STS
 .apt_generated
-.classpath
 .factorypath
-.project
-.settings
 .springBeans
 .sts4-cache
 
-### IntelliJ IDEA ###
-.iml
-.idea
+# Eclipse Project Files
+.classpath
+.project
+.settings/
+
+# IntelliJ IDEA Project Files
+*.iml
+*/*.iml
+.idea/
+*/.idea/
 .iws
 .ipr
+out
+
+*/.settings/
+*/.DS_Store
+.DS_Store
+Thumbs.db

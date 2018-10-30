@@ -3,7 +3,9 @@ package indi.liht.stat.utils;
 import org.apache.poi.hssf.usermodel.HSSFSheet;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.util.IOUtils;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -88,6 +90,23 @@ public class PoiUtils {
         System.out.println("加载[" + excelFilePath + "]工作簿[类型：OOXML]的"
                 + Arrays.toString(sheetNames) + "工作表完成！");
         return sheet;
+    }
+
+    /**
+     * 从某行的第columnNum列获取值
+     * @param row 某行
+     * @param columnNum 第几列
+     * @return 该行该列的值，cell为空则返回空
+     */
+    public static Object getCellValueFromRow(Row row, int columnNum) {
+        Cell cell;
+        if ((cell = row.getCell(columnNum)) != null) {
+            Object obj = getValueFromCell(cell);
+            if (obj != null) {
+                return obj;
+            }
+        }
+        return null;
     }
 
     /**

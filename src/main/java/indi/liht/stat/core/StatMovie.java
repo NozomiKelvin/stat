@@ -8,7 +8,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.poi.hssf.usermodel.HSSFRow;
 import org.apache.poi.hssf.usermodel.HSSFSheet;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
-import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -20,7 +19,9 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.*;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Usage:
@@ -51,6 +52,9 @@ public class StatMovie implements IStat {
 
     /** 要写入的工作表 */
     private Workbook workbookToWrite;
+
+    /** 用于createSheet时的锁 */
+    private Lock lock = new ReentrantLock();
 
     /**
      * 构造函数
@@ -92,17 +96,18 @@ public class StatMovie implements IStat {
         Sheet[] relationDataSheet = PoiUtils.getSheetsFromPath(EXCEL_ROOT_PATH
                         + properties.getProperty("stat.movie.relation-data.file-name").trim(),
                 properties.getProperty("stat.movie.relation-data.sheet-name").trim());
-        if (relationDataSheet != null && relationDataSheet[0] != null) {
+        if (Optional.ofNullable(relationDataSheet).isPresent()
+                && Optional.ofNullable(relationDataSheet[0]).isPresent()) {
             // A+B->weight
             Map<String, Integer> sectionABWeight = new HashMap<>();
             int cnt = 0;
-            int rowCount = relationDataSheet[0].getLastRowNum() - relationDataSheet[0].getFirstRowNum();
-            for (int rowNum = 1; rowNum < rowCount + 1; rowNum++) {
+            int rowCount = relationDataSheet[0].getLastRowNum() - relationDataSheet[0].getFirstRowNum() + 1;
+            for (int rowNum = 1; rowNum < rowCount; rowNum++) {
                 Row row = relationDataSheet[0].getRow(rowNum);
-                String sectionA = String.valueOf(this.getCellValueFromRow(row, 0));
-                String sectionB = String.valueOf(this.getCellValueFromRow(row, 1));
+                String sectionA = String.valueOf(PoiUtils.getCellValueFromRow(row, 0));
+                String sectionB = String.valueOf(PoiUtils.getCellValueFromRow(row, 1));
                 int weight = Double.valueOf(Optional.ofNullable(
-                        String.valueOf(this.getCellValueFromRow(row, 2))).orElse("0"))
+                        String.valueOf(PoiUtils.getCellValueFromRow(row, 2))).orElse("0"))
                         .intValue();
                 if (StringUtils.isNotEmpty(sectionA) && StringUtils.isNotEmpty(sectionB)) {
                     String key = sectionA + StatConsts.KEY_SEPARATOR + sectionB;
@@ -112,45 +117,29 @@ public class StatMovie implements IStat {
             }
             System.out.println("共加载[" + cnt + "]行有效数据！");
             // 处理主数据来源Excel数据
-            this.handleMainData(sectionABWeight);
+            this.handleSourceData(sectionABWeight);
         } else {
             System.out.println("加载赋值Excel数据失败！请检查stat.movie.relation-data的相关配置项！");
         }
     }
 
     /**
-     * 从某行的第columnNum列获取值
-     * @param row 某行
-     * @param columnNum 第几列
-     * @return 该行该列的值，cell为空则返回空
-     */
-    private Object getCellValueFromRow(Row row, int columnNum) {
-        Cell cell;
-        if ((cell = row.getCell(columnNum)) != null) {
-            Object obj = PoiUtils.getValueFromCell(cell);
-            if (obj != null) {
-                return obj;
-            }
-        }
-        return null;
-    }
-
-    /**
      * 处理来源Excel数据
      * @param sectionABWeight 赋值的分工权重
      */
-    private void handleMainData(Map<String, Integer> sectionABWeight) {
-        // 多个Sheet名字，用数组存起来
-        String[] mainDataSheetNames =
+    private void handleSourceData(Map<String, Integer> sectionABWeight) {
+        // 多个Sheet名字，split分割后，用数组存起来
+        String[] sourceDataSheetNames =
                 properties.getProperty("stat.movie.main-data.sheet-names").trim()
                         .split(StatConsts.PROPS_VALUE_SEPARATOR);
         // 多个Sheet，也是用数组存起来
-        Sheet[] mainDataSheet = PoiUtils.getSheetsFromPath(
+        Sheet[] sourceDataSheet = PoiUtils.getSheetsFromPath(
                 EXCEL_ROOT_PATH + properties.getProperty("stat.movie.main-data.file-name").trim(),
-                mainDataSheetNames);
+                sourceDataSheetNames);
 
         // 生成文件名，然后根据Excel文件类型构造对应的Workbook
-        String outputFileName = "stat-movie-" + DateUtils.getStrFromDate(new Date(), DateUtils.yyyyMMddHHmmss);
+        String outputFileName = "stat-movie-"
+                + DateUtils.getStrFromDate(new Date(), DateUtils.yyyyMMddHHmmss);
         String outputFileSuffix = properties.getProperty("stat.movie.output-data.suffix")
                 .trim().toLowerCase();
         switch (outputFileSuffix) {
@@ -164,49 +153,59 @@ public class StatMovie implements IStat {
         }
 
         // 用于存放汇总的电影公司权重
-        Map<String, Integer> allMovieABWeight = new LinkedHashMap<>();
+        Map<String, Integer> allMovieABWeight = new ConcurrentHashMap<>();
         // Sheet的数量
-        int sheetSize = mainDataSheetNames.length;
+        int sheetSize = sourceDataSheetNames.length;
+        // 固定大小线程池
+        ExecutorService threadPool = Executors.newFixedThreadPool(sheetSize);
+        // CountDownLatch
         final CountDownLatch latch = new CountDownLatch(sheetSize);
         for (int i = 0; i < sheetSize; i++) {
-            if (mainDataSheet != null && mainDataSheet[i] != null) {
+            if (Optional.ofNullable(sourceDataSheet).isPresent()
+                    && Optional.ofNullable(sourceDataSheet[i]).isPresent()) {
 
                 // 多线程，一个Sheet一个线程去解析，并且生成结果Sheet。结果Sheet名跟源Sheet名一样
                 final int _i = i;
-                new Thread(() -> {
+                threadPool.submit(() -> {
                     // A||B->weight
                     Map<String, Integer> movieABWeight = new LinkedHashMap<>();
                     int cnt = 0;
-                    int rowCount = mainDataSheet[_i].getLastRowNum()
-                            - mainDataSheet[_i].getFirstRowNum();
+                    int rowCount = sourceDataSheet[_i].getLastRowNum()
+                            - sourceDataSheet[_i].getFirstRowNum();
                     for (int rowNum = 0; rowNum < rowCount + 1; rowNum++) {
                         // 存放电影公司与其分工
                         List<MovieComSection> movieComSectionList = new LinkedList<>();
-                        if (isUselessRow(rowNum)) continue;
+                        if (isUselessRow(rowNum)) {
+                            continue;
+                        }
                         boolean useful = false;
-                        Row row = mainDataSheet[_i].getRow(rowNum);
+                        Row row = sourceDataSheet[_i].getRow(rowNum);
                         int cellNum = row.getLastCellNum() - row.getFirstCellNum();
                         for (int columnNum = 0; columnNum < cellNum; columnNum++) {
-                            String section = String.valueOf(getCellValueFromRow(row, columnNum));
+                            String section = String.valueOf(PoiUtils.getCellValueFromRow(row, columnNum));
                             String movieCom = String.valueOf(
-                                    getCellValueFromRow(mainDataSheet[_i].getRow(rowNum + 1), columnNum));
+                                    PoiUtils.getCellValueFromRow(sourceDataSheet[_i].getRow(rowNum + 1), columnNum));
                             if (StringUtils.isNotEmpty(section) && StringUtils.isNotEmpty(movieCom)) {
                                 movieComSectionList.add(new MovieComSection(movieCom, section));
-                                if (!useful) useful = true;
+                                if (!useful) {
+                                    useful = true;
+                                }
                             }
                         }
-                        if (useful) cnt++;
+                        if (useful) {
+                            cnt++;
+                        }
                         // 根据movieComSectionList和sectionABWeight计算权重
                         putToWeightMap(movieComSectionList, movieABWeight, sectionABWeight);
                     }
-                    // 合并权重
+                    // 合并单个权重到汇总权重
                     putPartToAll(movieABWeight, allMovieABWeight);
                     System.out.println("共加载[" + cnt * 2 + "]行有效数据！");
                     // 用计算后的结果，生成结果Sheet
-                    handleOutputData(movieABWeight, mainDataSheetNames[_i], outputFileSuffix);
+                    handleOutputData(movieABWeight, sourceDataSheetNames[_i], outputFileSuffix);
                     // CountDownLatch倒数
                     latch.countDown();
-                }).start(); // 线程启动
+                });
 
             } else {
                 System.out.println("加载来源Excel数据失败！请检查stat.movie.main-data的相关配置项");
@@ -219,6 +218,9 @@ public class StatMovie implements IStat {
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
+        // shutdown线程池
+        threadPool.shutdown();
+
         // 汇总
         this.handleOutputData(allMovieABWeight, "All", outputFileSuffix);
 
@@ -341,25 +343,31 @@ public class StatMovie implements IStat {
         // 根据后缀区分要Excel写入类型
         switch (outputFileSuffix) {
             case "xls":
-                this.writeToHSSFSheet(workbookToWrite, sheetName, movieABWeight, movieComList);
+                this.writeToHSSFSheet(sheetName, movieABWeight, movieComList);
                 break;
             default:
-                this.writeToXSSFSheet(workbookToWrite, sheetName, movieABWeight, movieComList);
+                this.writeToXSSFSheet(sheetName, movieABWeight, movieComList);
         }
 
     }
 
     /**
      * 输出到xls后缀的Excel中
-     * @param workbook 输出的工作表
      * @param sheetName 输出的Sheet名
      * @param movieABWeight 电影公司权重
      * @param movieComList 涉及到的所有电影公司列表
      */
-    private void writeToHSSFSheet(Workbook workbook, String sheetName,
+    private void writeToHSSFSheet(String sheetName,
                               Map<String, Integer> movieABWeight,
                               List<String> movieComList) {
-        HSSFSheet sheet = (HSSFSheet) workbook.createSheet(sheetName);
+        HSSFSheet sheet;
+        lock.lock();
+        try {
+            sheet = (HSSFSheet) workbookToWrite.createSheet(sheetName);
+        } finally {
+            lock.unlock();
+        }
+
         // 写入第一行
         HSSFRow firstRow = sheet.createRow(0);
         // 第一行第一列空白
@@ -368,25 +376,12 @@ public class StatMovie implements IStat {
             firstRow.createCell(i + 1).setCellValue(movieComList.get(i));
         }
 
-        // 写入后面的行
+        // 写入第二行开始的行
         for (int i = 0, listSize = movieComList.size(); i < listSize; i++) {
             // 每行第一列写入公司名
             HSSFRow row = sheet.createRow(i + 1);
             row.createCell(0).setCellValue(movieComList.get(i));
-            for (int j = 0; j < listSize; j++) {
-                if (i == j) row.createCell(j + 1).setCellValue(0);
-                String key = movieComList.get(i)
-                        + StatConsts.KEY_SEPARATOR
-                        + movieComList.get(j);
-                if (movieABWeight.containsKey(key)) {
-                    row.createCell(j + 1).setCellValue(movieABWeight.get(key));
-                } else {
-                    key = movieComList.get(j)
-                            + StatConsts.KEY_SEPARATOR
-                            + movieComList.get(i);
-                    row.createCell(j + 1).setCellValue(movieABWeight.getOrDefault(key, 0));
-                }
-            }
+            this.writeWeightToCell(i, listSize, row, movieABWeight, movieComList);
         }
         System.out.println("完成写入[" + sheetName + "]工作簿[类型：xls]，共"
                 + (movieComList.size() + 1) + "行！");
@@ -394,15 +389,21 @@ public class StatMovie implements IStat {
 
     /**
      * 输出到xlsx后缀的Excel中
-     * @param workbook 输出的工作表
      * @param sheetName 输出的Sheet名
      * @param movieABWeight 电影公司权重
      * @param movieComList 涉及到的所有电影公司列表
      */
-    private void writeToXSSFSheet(Workbook workbook, String sheetName,
+    private void writeToXSSFSheet(String sheetName,
                               Map<String, Integer> movieABWeight,
                               List<String> movieComList) {
-        XSSFSheet sheet = (XSSFSheet) workbook.createSheet(sheetName);
+        XSSFSheet sheet;
+        lock.lock();
+        try {
+            sheet = (XSSFSheet) workbookToWrite.createSheet(sheetName);
+        } finally {
+            lock.unlock();
+        }
+
         // 写入第一行
         XSSFRow firstRow = sheet.createRow(0);
         // 第一行第一列空白
@@ -411,28 +412,45 @@ public class StatMovie implements IStat {
             firstRow.createCell(i + 1).setCellValue(movieComList.get(i));
         }
 
-        // 写入后面的行
+        // 写入第二行开始的行
         for (int i = 0, listSize = movieComList.size(); i < listSize; i++) {
             // 每行第一列写入公司名
             XSSFRow row = sheet.createRow(i + 1);
             row.createCell(0).setCellValue(movieComList.get(i));
-            for (int j = 0; j < listSize; j++) {
-                if (i == j) row.createCell(j + 1).setCellValue(0);
-                String key = movieComList.get(i)
-                        + StatConsts.KEY_SEPARATOR
-                        + movieComList.get(j);
-                if (movieABWeight.containsKey(key)) {
-                    row.createCell(j + 1).setCellValue(movieABWeight.get(key));
-                } else {
-                    key = movieComList.get(j)
-                            + StatConsts.KEY_SEPARATOR
-                            + movieComList.get(i);
-                    row.createCell(j + 1).setCellValue(movieABWeight.getOrDefault(key, 0));
-                }
-            }
+            this.writeWeightToCell(i, listSize, row, movieABWeight, movieComList);
         }
         System.out.println("完成写入[" + sheetName + "]工作簿[类型：xlsx]，共"
                 + (movieComList.size() + 1) + "行！");
+    }
+
+    /**
+     * 把权重写入
+     * @param i 行数
+     * @param listSize 公司列表数量
+     * @param row 当前行
+     * @param movieABWeight 电影公司权重
+     * @param movieComList 涉及到的所有电影公司列表
+     */
+    private void writeWeightToCell(int i, int listSize, Row row,
+                                   Map<String, Integer> movieABWeight,
+                                   List<String> movieComList) {
+        for (int j = 0; j < listSize; j++) {
+            if (i == j) {
+                row.createCell(j + 1).setCellValue(0);
+            }
+            String key = movieComList.get(i)
+                    + StatConsts.KEY_SEPARATOR
+                    + movieComList.get(j);
+            if (movieABWeight.containsKey(key)) {
+                row.createCell(j + 1).setCellValue(movieABWeight.get(key));
+            } else {
+                // 把分隔符两边对调作为新的Key再去Map查
+                key = movieComList.get(j)
+                        + StatConsts.KEY_SEPARATOR
+                        + movieComList.get(i);
+                row.createCell(j + 1).setCellValue(movieABWeight.getOrDefault(key, 0));
+            }
+        }
     }
 
 }
