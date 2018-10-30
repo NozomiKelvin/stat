@@ -1,8 +1,8 @@
 Hello World!
 
-0、双击执行start.bat即可运行程序！
+0、双击执行package/start.bat即可运行程序！
 
-1、目录结构说明
+1、package目录结构说明
 	|--- conf
 	| |--- excel
 	| | |--- 存放赋值，企业透视图Excel
@@ -12,13 +12,11 @@ Hello World!
 	|
 	|--- lib（不用管，千万别删）
 	|
-	|--- README.txt（这个你已经在看了）
-	|
 	|--- start.bat（双击运行）
 	|
 	|--- stat-1.0.0.jar（不用管，千万别删）
 
-2、/conf/stat.properties配置文件
+2、package/conf/stat.properties配置文件
 
 a、输入文件相关配置
 # 主数据来源，文件名
@@ -35,4 +33,6 @@ b、输出文件相关配置
 # 最终生成统计数据的工作表类型（xlsx或者xls，默认xlsx）
 stat.movie.output-data.suffix=xlsx
 
-3、Enjoy it!
+3、src目录不解释了
+
+4、Enjoy it!
