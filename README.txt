@@ -35,4 +35,4 @@ b、输出文件相关配置
 # 最终生成统计数据的工作表类型（xlsx或者xls，默认xlsx）
 stat.movie.output-data.suffix=xlsx
 
-3、Enjoy yourself!
+3、Enjoy it!
