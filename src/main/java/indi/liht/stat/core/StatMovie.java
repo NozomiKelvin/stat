@@ -168,7 +168,7 @@ public class StatMovie implements IStat {
                 final int _i = i;
                 threadPool.submit(() -> {
                     // A||B->weight
-                    Map<String, Integer> movieABWeight = new LinkedHashMap<>();
+                    Map<String, Integer> movieABWeight = new HashMap<>();
                     int cnt = 0;
                     int rowCount = sourceDataSheet[_i].getLastRowNum()
                             - sourceDataSheet[_i].getFirstRowNum();
