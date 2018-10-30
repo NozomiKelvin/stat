@@ -167,6 +167,7 @@ public class StatMovie implements IStat {
                 // 多线程，一个Sheet一个线程去解析，并且生成结果Sheet。结果Sheet名跟源Sheet名一样
                 final int _i = i;
                 threadPool.submit(() -> {
+                    Thread.currentThread().setName(sourceDataSheetNames[_i] +"-Thread");
                     // A||B->weight
                     Map<String, Integer> movieABWeight = new HashMap<>();
                     int cnt = 0;
@@ -205,6 +206,7 @@ public class StatMovie implements IStat {
                     handleOutputData(movieABWeight, sourceDataSheetNames[_i], outputFileSuffix);
                     // CountDownLatch倒数
                     latch.countDown();
+                    System.out.println("[" + Thread.currentThread().getName() + "]线程执行完成！");
                 });
 
             } else {

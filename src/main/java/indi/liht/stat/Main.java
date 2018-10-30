@@ -20,9 +20,10 @@ public class Main {
     public static void main(String[] args) {
         // 开始统计
         IStat stat = new StatMovie();
+        System.out.println("やほー、统计开始……");
         stat.stat();
         try {
-            System.out.println("よっしゃ，Mission Completed！5秒后退出程序……");
+            System.out.println("よっしゃ、mission completed！5秒后退出程序……");
             TimeUnit.SECONDS.sleep(5);
         } catch (InterruptedException e) {
             e.printStackTrace();
